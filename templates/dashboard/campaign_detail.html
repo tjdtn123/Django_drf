@@ -1,0 +1,157 @@
+{% extends "dashboard/base.html" %}
+{% block title %}캠페인 상세 - Mini Ad Manager{% endblock %}
+{% block nav_campaigns %}active{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <a href="/dashboard/campaigns/" class="text-muted small text-decoration-none">← 목록</a>
+    <h4 class="fw-bold mb-0 mt-1" id="campaign-name">로딩 중...</h4>
+  </div>
+  <div class="d-flex gap-2">
+    <a id="export-btn" href="#" class="btn btn-outline-secondary btn-sm">CSV 다운로드</a>
+  </div>
+</div>
+
+<!-- 요약 카드 -->
+<div class="row g-3 mb-4">
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">상태</div>
+      <div id="c-status" class="mt-1">-</div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">총 노출</div>
+      <div class="fw-bold fs-5" id="c-impressions">-</div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">총 클릭</div>
+      <div class="fw-bold fs-5" id="c-clicks">-</div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">CTR</div>
+      <div class="fw-bold fs-5" id="c-ctr">-</div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">소진 광고비</div>
+      <div class="fw-bold fs-5" id="c-spent">-</div>
+    </div>
+  </div>
+  <div class="col-md-2">
+    <div class="card shadow-sm text-center p-3">
+      <div class="text-muted small">예산 소진율</div>
+      <div class="fw-bold fs-5" id="c-budget-rate">-</div>
+    </div>
+  </div>
+</div>
+
+<!-- 일별 추이 차트 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">일별 노출/클릭 추이 (최근 30일)</span>
+    <div class="d-flex gap-2 align-items-center">
+      <input type="date" id="start-date" class="form-control form-control-sm" style="width:140px">
+      <span>~</span>
+      <input type="date" id="end-date" class="form-control form-control-sm" style="width:140px">
+      <button class="btn btn-sm btn-primary" onclick="loadReport()">조회</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <canvas id="trendChart" height="100"></canvas>
+  </div>
+</div>
+
+<!-- 일별 통계 테이블 -->
+<div class="card shadow-sm">
+  <div class="card-header bg-white fw-semibold">일별 통계</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr><th>날짜</th><th>노출</th><th>클릭</th><th>CTR</th><th>소진액</th></tr>
+      </thead>
+      <tbody id="daily-table"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const campaignId = window.location.pathname.split('/').filter(Boolean).pop();
+  let trendChart = null;
+
+  const STATUS_BADGE = {
+    active: '<span class="badge bg-success">활성</span>',
+    paused: '<span class="badge bg-warning text-dark">일시정지</span>',
+    draft:  '<span class="badge bg-secondary">초안</span>',
+    completed: '<span class="badge bg-dark">완료</span>',
+  };
+
+  // 기본 날짜 설정
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  document.getElementById('start-date').value = thirtyDaysAgo;
+  document.getElementById('end-date').value = today;
+
+  document.getElementById('export-btn').href =
+    `/api/v1/reports/export/?campaign_id=${campaignId}&start_date=${thirtyDaysAgo}&end_date=${today}`;
+
+  async function loadReport() {
+    const start = document.getElementById('start-date').value;
+    const end = document.getElementById('end-date').value;
+    const res = await apiFetch(`/reports/campaign/${campaignId}/?start_date=${start}&end_date=${end}`);
+    if (!res || !res.ok) return;
+    const data = await res.json();
+    const s = data.summary;
+
+    document.getElementById('campaign-name').textContent = s.campaign_name;
+    document.getElementById('c-status').innerHTML = STATUS_BADGE[s.status] || s.status;
+    document.getElementById('c-impressions').textContent = s.impressions.toLocaleString();
+    document.getElementById('c-clicks').textContent = s.clicks.toLocaleString();
+    document.getElementById('c-ctr').textContent = (s.ctr * 100).toFixed(2) + '%';
+    document.getElementById('c-spent').textContent = '₩' + s.spent.toLocaleString();
+    document.getElementById('c-budget-rate').textContent = s.budget_spent_rate + '%';
+
+    // 차트
+    const labels = data.daily_stats.map(r => r.date);
+    const imps = data.daily_stats.map(r => r.impressions);
+    const clicks = data.daily_stats.map(r => r.clicks);
+
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: '노출', data: imps, borderColor: '#0d6efd', tension: 0.3, fill: false },
+          { label: '클릭', data: clicks, borderColor: '#198754', tension: 0.3, fill: false },
+        ]
+      },
+      options: { responsive: true, interaction: { mode: 'index' } }
+    });
+
+    // 테이블
+    const tbody = document.getElementById('daily-table');
+    tbody.innerHTML = data.daily_stats.length
+      ? data.daily_stats.map(r => `
+          <tr>
+            <td>${r.date}</td>
+            <td>${r.impressions.toLocaleString()}</td>
+            <td>${r.clicks.toLocaleString()}</td>
+            <td>${(r.ctr * 100).toFixed(2)}%</td>
+            <td>₩${r.spent.toLocaleString()}</td>
+          </tr>`).join('')
+      : '<tr><td colspan="5" class="text-center py-3 text-muted">데이터 없음</td></tr>';
+  }
+
+  loadReport();
+</script>
+{% endblock %}
